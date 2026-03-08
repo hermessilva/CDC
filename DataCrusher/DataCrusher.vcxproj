@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- ===================================================================== -->
+  <!-- DataCrusher - High-Performance PostgreSQL CDC Engine                   -->
+  <!-- Tootega Pesquisa e Inovação - All rights reserved © 1999-2026          -->
+  <!-- ===================================================================== -->
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{DC000001-CDC0-4200-A000-DA7ACDB00001}</ProjectGuid>
+    <RootNamespace>DataCrusher</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <!-- PostgreSQL path auto-detection -->
+  <PropertyGroup Label="PostgreSQL">
+    <PgSqlHome Condition="'$(PGSQL_HOME)' != ''">$(PGSQL_HOME)</PgSqlHome>
+    <PgSqlHome Condition="'$(PgSqlHome)' == '' AND Exists('C:\Program Files\PostgreSQL\18')">C:\Program Files\PostgreSQL\18</PgSqlHome>
+    <PgSqlHome Condition="'$(PgSqlHome)' == '' AND Exists('C:\Program Files\PostgreSQL\17')">C:\Program Files\PostgreSQL\17</PgSqlHome>
+    <PgSqlHome Condition="'$(PgSqlHome)' == '' AND Exists('C:\Program Files\PostgreSQL\16')">C:\Program Files\PostgreSQL\16</PgSqlHome>
+    <PgSqlHome Condition="'$(PgSqlHome)' == '' AND Exists('C:\Program Files\PostgreSQL\15')">C:\Program Files\PostgreSQL\15</PgSqlHome>
+    <PgSqlHome Condition="'$(PgSqlHome)' == ''">C:\Program Files\PostgreSQL\18</PgSqlHome>
+  </PropertyGroup>
+  <!-- Configuration: Debug|x64 -->
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <!-- Configuration: Release|x64 -->
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <!-- Output Directories -->
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <LinkIncremental>true</LinkIncremental>
+    <OutDir>$(ProjectDir)..\x64\</OutDir>
+    <IntDir>$(Platform)\$(Configuration)\</IntDir>
+    <TargetName>DataCrusher</TargetName>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <LinkIncremental>false</LinkIncremental>
+    <OutDir>$(ProjectDir)..\x64\</OutDir>
+    <IntDir>$(Platform)\$(Configuration)\</IntDir>
+    <TargetName>DataCrusher</TargetName>
+  </PropertyGroup>
+  <!-- Compiler/Linker: Debug|x64 -->
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;_UNICODE;UNICODE;DC_PLATFORM_WINDOWS=1;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <Optimization>Disabled</Optimization>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(PgSqlHome)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
+      <BufferSecurityCheck>true</BufferSecurityCheck>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(PgSqlHome)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>libpq.lib;ws2_32.lib;secur32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <!-- DEV ONLY: DLLs from installed PG (includes SSL it depends on).
+         Production builds use Build-DataCrusher.ps1 which produces a single static .exe. -->
+    <PostBuildEvent>
+      <Command>if not exist "$(OutDir)libpq.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\libpq.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )
+if not exist "$(OutDir)libintl-9.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\libintl-9.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )
+if not exist "$(OutDir)libssl-3-x64.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\libssl-3-x64.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )
+if not exist "$(OutDir)libcrypto-3-x64.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\libcrypto-3-x64.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )
+if not exist "$(OutDir)libiconv-2.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\libiconv-2.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )
+if not exist "$(OutDir)libwinpthread-1.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\libwinpthread-1.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )
+if not exist "$(OutDir)libzstd.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\libzstd.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )
+if not exist "$(OutDir)liblz4.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\liblz4.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )
+if not exist "$(OutDir)zlib1.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\zlib1.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )</Command>
+      <Message>Copying PostgreSQL runtime DLLs (dev mode)...</Message>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <!-- Compiler/Linker: Release|x64 -->
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;_UNICODE;UNICODE;DC_PLATFORM_WINDOWS=1;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(PgSqlHome)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <BufferSecurityCheck>true</BufferSecurityCheck>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(PgSqlHome)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>libpq.lib;ws2_32.lib;secur32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <!-- DEV ONLY: DLLs from installed PG (includes SSL it depends on).
+         Production builds use Build-DataCrusher.ps1 which produces a single static .exe. -->
+    <PostBuildEvent>
+      <Command>if not exist "$(OutDir)libpq.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\libpq.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )
+if not exist "$(OutDir)libintl-9.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\libintl-9.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )
+if not exist "$(OutDir)libssl-3-x64.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\libssl-3-x64.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )
+if not exist "$(OutDir)libcrypto-3-x64.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\libcrypto-3-x64.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )
+if not exist "$(OutDir)libiconv-2.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\libiconv-2.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )
+if not exist "$(OutDir)libwinpthread-1.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\libwinpthread-1.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )
+if not exist "$(OutDir)libzstd.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\libzstd.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )
+if not exist "$(OutDir)liblz4.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\liblz4.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )
+if not exist "$(OutDir)zlib1.dll" ( xcopy /Y /D "$(PgSqlHome)\bin\zlib1.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 )</Command>
+      <Message>Copying PostgreSQL runtime DLLs (dev mode)...</Message>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <!-- Header Files -->
+  <ItemGroup>
+    <ClInclude Include="src\Platform.h" />
+    <ClInclude Include="src\Constants.h" />
+    <ClInclude Include="src\Logger.h" />
+    <ClInclude Include="src\TypeHandlers.h" />
+    <ClInclude Include="src\WalMessageParser.h" />
+    <ClInclude Include="src\ReplicationStream.h" />
+    <ClInclude Include="src\SignalTable.h" />
+    <ClInclude Include="src\TransactionManager.h" />
+    <ClInclude Include="src\CopyWriter.h" />
+    <ClInclude Include="src\ReconnectionManager.h" />
+    <ClInclude Include="src\LatencyMonitor.h" />
+    <ClInclude Include="src\TenantWorkerConfig.h" />
+    <ClInclude Include="src\TenantWorker.h" />
+    <ClInclude Include="src\WorkerManager.h" />
+    <ClInclude Include="src\DataCrusherEngine.h" />
+  </ItemGroup>
+  <!-- Source Files -->
+  <ItemGroup>
+    <ClCompile Include="src\Logger.cpp" />
+    <ClCompile Include="src\TypeHandlers.cpp" />
+    <ClCompile Include="src\WalMessageParser.cpp" />
+    <ClCompile Include="src\ReplicationStream.cpp" />
+    <ClCompile Include="src\SignalTable.cpp" />
+    <ClCompile Include="src\TransactionManager.cpp" />
+    <ClCompile Include="src\CopyWriter.cpp" />
+    <ClCompile Include="src\ReconnectionManager.cpp" />
+    <ClCompile Include="src\LatencyMonitor.cpp" />
+    <ClCompile Include="src\TenantWorker.cpp" />
+    <ClCompile Include="src\WorkerManager.cpp" />
+    <ClCompile Include="src\DataCrusherEngine.cpp" />
+    <ClCompile Include="src\Main.cpp" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>
