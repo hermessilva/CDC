@@ -10,7 +10,7 @@
 #include <cstdlib>
 
 #if DC_PLATFORM_WINDOWS
-#include <Windows.h>
+#include <windows.h>
 #endif
 
 static void InitConsole()

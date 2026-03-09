@@ -46,7 +46,12 @@ endif()
 # ===========================================================================
 # Output Directory
 # ===========================================================================
-set(DC_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/../x64")
+# Override with -DDC_DEPLOY_DIR=<path>  (Build-DataCrusher.ps1 sets this automatically)
+if(DEFINED DC_DEPLOY_DIR)
+    set(DC_OUTPUT_DIR "${DC_DEPLOY_DIR}")
+else()
+    set(DC_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/../Deploy")
+endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${DC_OUTPUT_DIR}")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${DC_OUTPUT_DIR}")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${DC_OUTPUT_DIR}")
@@ -59,11 +64,11 @@ endforeach()
 # ===========================================================================
 # Build Options
 # ===========================================================================
-option(DC_ENABLE_ASAN      "Enable AddressSanitizer (Debug builds)"  OFF)
-option(DC_ENABLE_TSAN      "Enable ThreadSanitizer (Debug builds)"   OFF)
-option(DC_BUILD_TESTS      "Build unit tests"                        OFF)
-option(DC_STATIC_RUNTIME   "Use static CRT on Windows (/MT)"        OFF)
-option(DC_STATIC_LINK      "Statically link deps on Linux (except libc)" OFF)
+option(DC_ENABLE_ASAN      "Enable AddressSanitizer (Debug builds)"           OFF)
+option(DC_ENABLE_TSAN      "Enable ThreadSanitizer (Debug builds)"            OFF)
+option(DC_BUILD_TESTS      "Build unit tests"                                 OFF)
+option(DC_STATIC_RUNTIME   "Use static CRT on Windows (/MT, self-contained)"  ON)
+option(DC_STATIC_LINK      "Statically link all deps (self-contained binary)" ON)
 
 # ===========================================================================
 # Platform Detection
@@ -213,9 +218,13 @@ target_include_directories(DataCrusher PRIVATE
 if(WIN32)
     target_include_directories(DataCrusher PRIVATE "${LIBPQ_INCLUDE_DIR}")
     if(DC_STATIC_LINK)
-        # Static libpq from vcpkg (no SSL, no compression)
+        # Library suffix: .lib for MSVC, .a for MinGW (llvm-mingw Windows ARM64 cross-compilation)
         set(_SAVED_SUFFIXES ${CMAKE_FIND_LIBRARY_SUFFIXES})
-        set(CMAKE_FIND_LIBRARY_SUFFIXES ".lib")
+        if(MSVC)
+            set(CMAKE_FIND_LIBRARY_SUFFIXES ".lib")
+        else()
+            set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
+        endif()
 
         find_library(PQ_STATIC      NAMES pq libpq       PATHS ${LIBPQ_STATIC_LIB_DIR} NO_DEFAULT_PATH REQUIRED)
         find_library(PGCOMMON_STATIC NAMES pgcommon libpgcommon PATHS ${LIBPQ_STATIC_LIB_DIR} NO_DEFAULT_PATH REQUIRED)
@@ -227,6 +236,10 @@ if(WIN32)
             ${PQ_STATIC} ${PGCOMMON_STATIC} ${PGPORT_STATIC}
             ws2_32 secur32 advapi32 shell32 wldap32 crypt32
         )
+        if(NOT MSVC)
+            # MinGW (llvm-mingw): pull in libgcc, libstdc++, libwinpthread statically
+            target_link_options(DataCrusher PRIVATE -static)
+        endif()
 
         message(STATUS "  Static libpq:       ${PQ_STATIC}")
         message(STATUS "  Static libpgcommon: ${PGCOMMON_STATIC}")

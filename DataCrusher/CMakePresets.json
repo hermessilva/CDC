@@ -25,12 +25,14 @@
         {
             "name": "windows-x64-release",
             "displayName": "Windows x64 Release",
-            "description": "VS 2026 x64 Release build with full optimizations",
+            "description": "VS 2026 x64 Release build with full optimizations (static, self-contained)",
             "generator": "Visual Studio 18 2026",
             "architecture": "x64",
             "binaryDir": "${sourceDir}/build/${presetName}",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release"
+                "CMAKE_BUILD_TYPE": "Release",
+                "DC_STATIC_LINK": "ON",
+                "DC_STATIC_RUNTIME": "ON"
             },
             "condition": {
                 "type": "equals",
@@ -56,10 +58,11 @@
         {
             "name": "linux-x64-release",
             "displayName": "Linux x64 Release",
-            "description": "GCC/Clang optimized Release build",
+            "description": "GCC/Clang optimized Release build (static, self-contained)",
             "binaryDir": "${sourceDir}/build/${presetName}",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release"
+                "CMAKE_BUILD_TYPE": "Release",
+                "DC_STATIC_LINK": "ON"
             },
             "condition": {
                 "type": "equals",

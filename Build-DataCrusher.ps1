@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Compiles the DataCrusher PostgreSQL CDC Engine using CMake.
-    Output files are placed in Tools\x64\ with platform-tagged names:
+    Output files are placed in .\Deploy\ with platform-tagged names:
         DataCrusher.win-x64.exe
         DataCrusher.win-arm64.exe
         DataCrusher.linux-x64
@@ -43,8 +43,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$ProjectDir  = $PSScriptRoot
-$OutputDir   = Join-Path $ProjectDir '..\x64'
+$ProjectDir  = Join-Path $PSScriptRoot 'DataCrusher'
+$OutputDir   = Join-Path $PSScriptRoot 'Deploy'
 $BuildRoot   = Join-Path $ProjectDir 'build'
 
 # -- Helpers -----------------------------------------------------------------
@@ -82,12 +82,37 @@ function Find-VSCMake {
 function Get-CMakeGenerator {
     $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path $vsWhere) {
-        $version = & $vsWhere -latest -property catalog_productLineVersion 2>$null
-        if ($version -eq '2022') { return 'Visual Studio 17 2022' }
-        if ($version -eq '2019') { return 'Visual Studio 16 2019' }
+        $installVersion = & $vsWhere -latest -property installationVersion 2>$null
+        if ($installVersion) {
+            $major = [int]($installVersion -split '\.')[0]
+            $generatorMap = @{
+                18 = 'Visual Studio 18 2026'
+                17 = 'Visual Studio 17 2022'
+                16 = 'Visual Studio 16 2019'
+                15 = 'Visual Studio 15 2017'
+            }
+            if ($generatorMap.ContainsKey($major)) {
+                return $generatorMap[$major]
+            }
+        }
     }
     if (Test-Command 'ninja') { return 'Ninja' }
-    return 'Visual Studio 17 2022'
+    return 'Visual Studio 18 2026'
+}
+
+function Get-VSArm64Toolset {
+    # Returns 'MSVC'    — VC++ ARM64 cross-compiler (component: MSVC vXXX - ARM64 build tools)
+    # Returns 'ClangCL' — LLVM Clang in VS targeting ARM64  (component: C++ Clang tools for Windows)
+    # Returns $null     — no ARM64-capable Windows compiler found; Docker fallback will be used
+    $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path $vsWhere)) { return $null }
+    $installPath = & $vsWhere -latest -property installationPath 2>$null
+    if (-not $installPath) { return $null }
+    $arm64CL = Join-Path $installPath 'VC\Tools\MSVC\*\bin\Hostx64\arm64\cl.exe'
+    if (Get-ChildItem $arm64CL -ErrorAction SilentlyContinue | Select-Object -First 1) { return 'MSVC' }
+    $clangCL = Join-Path $installPath 'VC\Tools\Llvm\x64\bin\clang-cl.exe'
+    if (Test-Path $clangCL) { return 'ClangCL' }
+    return $null
 }
 
 function Find-PostgreSQL {
@@ -132,8 +157,8 @@ if ($Clean -and (Test-Path $BuildRoot)) {
 
 # -- Build functions ---------------------------------------------------------
 
-function Ensure-VcpkgLibpq([string]$Arch) {
-    $triplet   = "$Arch-windows-static"
+function Ensure-VcpkgLibpq([string]$Arch, [string]$Toolset = 'MSVC') {
+    $triplet   = if ($Toolset -eq 'ClangCL') { "$Arch-windows-static-clang" } else { "$Arch-windows-static" }
     $vcpkgRoot = Join-Path $BuildRoot "vcpkg"
     $vcpkgExe  = Join-Path $vcpkgRoot "vcpkg.exe"
 
@@ -162,13 +187,31 @@ function Ensure-VcpkgLibpq([string]$Arch) {
         Write-Ok "vcpkg bootstrapped"
     }
 
+    # For ClangCL, create a custom overlay triplet (built-in arm64-windows-static requires MSVC)
+    $overlayArgs = @()
+    if ($Toolset -eq 'ClangCL') {
+        $tripletsDir = Join-Path $BuildRoot 'triplets'
+        if (-not (Test-Path $tripletsDir)) { New-Item -ItemType Directory -Path $tripletsDir -Force | Out-Null }
+        $tripletFile = Join-Path $tripletsDir "$triplet.cmake"
+        if (-not (Test-Path $tripletFile)) {
+            Set-Content -Path $tripletFile -Encoding UTF8 -Value (
+                "set(VCPKG_TARGET_ARCHITECTURE arm64)`n" +
+                "set(VCPKG_CRT_LINKAGE static)`n" +
+                "set(VCPKG_LIBRARY_LINKAGE static)`n" +
+                "set(VCPKG_PLATFORM_TOOLSET ClangCL)"
+            )
+            Write-Ok "Created ClangCL triplet: $tripletFile"
+        }
+        $overlayArgs = @("--overlay-triplets=$tripletsDir")
+    }
+
     # Check if static libpq is already installed
     $installedDir = Join-Path $vcpkgRoot "installed\$triplet"
     $pqHeader     = Join-Path $installedDir "include\libpq-fe.h"
     if (-not (Test-Path $pqHeader)) {
         Write-Step "Building static libpq via vcpkg ($triplet) -- first run may take several minutes"
         $ErrorActionPreference = 'Continue'
-        & $vcpkgExe install "libpq[core]:$triplet" --no-print-usage 2>&1 | ForEach-Object { Write-Host "  $_" }
+        & $vcpkgExe install "libpq[core]:$triplet" @overlayArgs --no-print-usage 2>&1 | ForEach-Object { Write-Host "  $_" }
         $installExit = $LASTEXITCODE
         $ErrorActionPreference = 'Stop'
         if ($installExit -ne 0 -or -not (Test-Path $pqHeader)) {
@@ -198,8 +241,25 @@ function Build-Windows([string]$Arch) {
         return $false
     }
 
+    # For ARM64: prefer native MSVC/ClangCL; fall back to Docker + llvm-mingw if neither is available
+    $arm64Toolset = $null
+    if ($Arch -eq 'arm64') {
+        $arm64Toolset = Get-VSArm64Toolset
+        if (-not $arm64Toolset) {
+            if (Test-Command 'docker') {
+                return Build-WinArm64ViaDocker
+            }
+            Write-Fail "$Tag -- No ARM64 compiler found and Docker is unavailable."
+            Write-Host "  Fix A (native): VS Installer -> Modify -> Individual Components" -ForegroundColor Yellow
+            Write-Host "    search: 'MSVC vXXX - ARM64 build tools'  OR  'C++ Clang tools for Windows'" -ForegroundColor Yellow
+            Write-Host "  Fix B (cross):  install Docker Desktop (Linux containers) and retry" -ForegroundColor Yellow
+            return $false
+        }
+        Write-Ok "ARM64 toolset: $arm64Toolset"
+    }
+
     # Build static libpq via vcpkg (no SSL, no compression)
-    $pgStaticRoot = Ensure-VcpkgLibpq $Arch
+    $pgStaticRoot = Ensure-VcpkgLibpq $Arch $(if ($arm64Toolset) { $arm64Toolset } else { 'MSVC' })
     if (-not $pgStaticRoot) {
         Write-Fail "$Tag -- Static libpq not available. Cannot proceed with static build."
         return $false
@@ -208,18 +268,30 @@ function Build-Windows([string]$Arch) {
     Write-Step "Building $Tag (static)"
     Write-Host "  Static libpq: $pgStaticRoot"
 
+    $Generator = Get-CMakeGenerator
+    $cmakeArch = if ($Arch -eq 'arm64') { 'ARM64' } else { 'x64' }
+
+    # Auto-clean stale build dir if the CMake generator changed
+    $cacheFile = Join-Path $BuildDir 'CMakeCache.txt'
+    if (Test-Path $cacheFile) {
+        $cachedGen = (Get-Content $cacheFile | Where-Object { $_ -match '^CMAKE_GENERATOR:' }) -replace '^CMAKE_GENERATOR:[^=]+=', ''
+        if ($cachedGen -and $cachedGen.Trim() -ne $Generator) {
+            Write-Host "  Generator changed ('$($cachedGen.Trim())' -> '$Generator'), clearing stale cache..." -ForegroundColor Yellow
+            Remove-Item -Recurse -Force $BuildDir
+        }
+    }
+
     if (-not (Test-Path $BuildDir)) {
         New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
     }
 
-    $Generator = Get-CMakeGenerator
-    $cmakeArch = if ($Arch -eq 'arm64') { 'ARM64' } else { 'x64' }
-
+    $deployDirCmake = $OutputDir -replace '\\', '/'
     $configArgs = @(
         '-S', $ProjectDir,
         '-B', $BuildDir,
         "-DDC_PLATFORM_TAG=$Tag",
         "-DPOSTGRESQL_STATIC_ROOT=$pgStaticRoot",
+        "-DDC_DEPLOY_DIR=$deployDirCmake",
         "-DDC_STATIC_LINK=ON",
         "-DDC_STATIC_RUNTIME=ON",
         "-DCMAKE_BUILD_TYPE=Release"
@@ -227,6 +299,7 @@ function Build-Windows([string]$Arch) {
 
     if ($Generator -like 'Visual Studio*') {
         $configArgs += @('-G', $Generator, '-A', $cmakeArch)
+        if ($arm64Toolset -eq 'ClangCL') { $configArgs += @('-T', 'ClangCL') }
     } else {
         $configArgs += @('-G', $Generator)
     }
@@ -305,7 +378,7 @@ function Build-Linux([string]$Arch) {
 
         $cmakeToolchain = $null
     } else {
-        $dockerPlatform = $null
+        $dockerPlatform = 'linux/amd64'
         $dockerImage    = 'ubuntu:24.04'
         $setupCmd       = 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cmake make gcc g++ pkg-config wget ca-certificates bzip2 && rm -rf /var/lib/apt/lists/*'
 
@@ -333,7 +406,7 @@ function Build-Linux([string]$Arch) {
     }
 
     $dockerCmd = @"
-$setupCmd && $pgBuildCmd && $pgConfigureCmd && $pgMakeCmd && cd /src && cmake -S . -B /build -DDC_PLATFORM_TAG=$Tag -DCMAKE_BUILD_TYPE=Release -DDC_STATIC_LINK=ON $toolchainArg && cmake --build /build --config Release --parallel && ls -la /x64/
+$setupCmd && $pgBuildCmd && $pgConfigureCmd && $pgMakeCmd && cd /src && cmake -S . -B /build -DDC_PLATFORM_TAG=$Tag -DCMAKE_BUILD_TYPE=Release -DDC_STATIC_LINK=ON -DDC_DEPLOY_DIR=/deploy $toolchainArg && cmake --build /build --config Release --parallel && ls -la /deploy/
 "@
 
     $projectDirUnix = $ProjectDir -replace '\\','/'
@@ -347,7 +420,7 @@ $setupCmd && $pgBuildCmd && $pgConfigureCmd && $pgMakeCmd && cd /src && cmake -S
     }
     $dockerArgs += @(
         '-v', "${projectDirUnix}:/src:ro",
-        '-v', "${outputDirUnix}:/x64",
+        '-v', "${outputDirUnix}:/deploy",
         '-v', "${buildDirUnix}:/build",
         $dockerImage,
         'bash', '-c', $dockerCmd
@@ -372,6 +445,115 @@ $setupCmd && $pgBuildCmd && $pgConfigureCmd && $pgMakeCmd && cd /src && cmake -S
         Write-Fail "$Tag -- Output not found at $expected"
         return $false
     }
+}
+
+function Build-WinArm64ViaDocker {
+    $Tag      = 'win-arm64'
+    $BuildDir = Join-Path $BuildRoot $Tag
+
+    Write-Step "Building $Tag (Docker + llvm-mingw cross-compilation)"
+
+    if (-not (Test-Path $BuildDir)) {
+        New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
+    }
+
+    # CMake toolchain file for aarch64-w64-mingw32
+    $utf8NoBOM = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText(
+        (Join-Path $BuildDir 'toolchain-win-arm64.cmake'),
+@"
+set(CMAKE_SYSTEM_NAME Windows)
+set(CMAKE_SYSTEM_PROCESSOR ARM64)
+set(CMAKE_C_COMPILER   aarch64-w64-mingw32-clang)
+set(CMAKE_CXX_COMPILER aarch64-w64-mingw32-clang++)
+set(CMAKE_AR     aarch64-w64-mingw32-ar     CACHE STRING "")
+set(CMAKE_RANLIB aarch64-w64-mingw32-ranlib CACHE STRING "")
+"@, $utf8NoBOM
+    )
+
+    # Bash build script written to disk — avoids all PowerShell string-interpolation issues
+    $bashScript = @'
+#!/usr/bin/env bash
+set -e
+PG_VERSION=16.8
+
+# Build static libpq (no SSL, no GSSAPI, no LDAP)
+cd /tmp
+wget -q --no-check-certificate \
+  "https://ftp.postgresql.org/pub/source/v${PG_VERSION}/postgresql-${PG_VERSION}.tar.bz2"
+tar xf "postgresql-${PG_VERSION}.tar.bz2"
+cd "postgresql-${PG_VERSION}"
+./configure \
+  --build=x86_64-linux-gnu \
+  --host=aarch64-w64-mingw32 \
+  --without-readline --without-zlib --without-gssapi \
+  --without-ldap --without-icu --without-openssl \
+  --prefix=/opt/pgsql \
+  CC=aarch64-w64-mingw32-clang \
+  AR=aarch64-w64-mingw32-ar \
+  RANLIB=aarch64-w64-mingw32-ranlib > /dev/null 2>&1
+# Patch sigsetjmp/siglongjmp -> setjmp/longjmp
+# (__builtin_setjmp is not supported by Clang for aarch64-w64-mingw32)
+for f in src/common/pg_get_line.c src/port/pg_crc32c_armv8_choose.c; do
+  sed -i '1s|^|#include <setjmp.h>\n|' "$f"
+  sed -i 's/sigjmp_buf/jmp_buf/g; s/siglongjmp(/longjmp(/g' "$f"
+  sed -E -i 's/sigsetjmp\(([^,]+), *[0-9]+\)/setjmp(\1)/g' "$f"
+done
+make -j"$(nproc)" -C src/include          install > /dev/null 2>&1
+make -j"$(nproc)" -C src/common           install > /dev/null 2>&1
+make -j"$(nproc)" -C src/port             install > /dev/null 2>&1
+make -j"$(nproc)" -C src/interfaces/libpq install > /dev/null 2>&1
+cd / && rm -rf /tmp/postgresql-*
+
+# Build DataCrusher
+cmake -S /src -B /build \
+  -DCMAKE_TOOLCHAIN_FILE=/build/toolchain-win-arm64.cmake \
+  -DDC_PLATFORM_TAG=win-arm64 \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DDC_STATIC_LINK=ON \
+  -DDC_DEPLOY_DIR=/deploy \
+  -DPOSTGRESQL_STATIC_ROOT=/opt/pgsql
+cmake --build /build --config Release --parallel
+'@
+    [System.IO.File]::WriteAllText(
+        (Join-Path $BuildDir 'build-win-arm64.sh'),
+        $bashScript.Replace("`r`n", "`n"),
+        $utf8NoBOM
+    )
+
+    $projectDirUnix = $ProjectDir -replace '\\', '/'
+    $outputDirUnix  = $OutputDir  -replace '\\', '/'
+    $buildDirUnix   = $BuildDir   -replace '\\', '/'
+
+    $dockerArgs = @(
+        'run', '--rm',
+        '-v', "${projectDirUnix}:/src:ro",
+        '-v', "${outputDirUnix}:/deploy",
+        '-v', "${buildDirUnix}:/build",
+        'mstorsjo/llvm-mingw:latest',
+        'bash', '/build/build-win-arm64.sh'
+    )
+
+    Write-Host "  docker run --rm -v .../src:ro -v .../deploy -v .../build mstorsjo/llvm-mingw ..."
+    $ErrorActionPreference = 'Continue'
+    & docker @dockerArgs 2>&1 | ForEach-Object { Write-Host "  $_" }
+    $dockerExit = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($dockerExit -ne 0) {
+        Write-Fail "$Tag -- Docker build failed (exit $dockerExit)"
+        return $false
+    }
+
+    $expected = Join-Path $OutputDir 'DataCrusher.win-arm64.exe'
+    if (Test-Path $expected) {
+        $size = (Get-Item $expected).Length
+        Write-Ok "$Tag -- $expected ($([math]::Round($size / 1MB, 2)) MB, static)"
+        return $true
+    }
+    $found = Get-ChildItem $OutputDir -Filter 'DataCrusher.win-arm64*' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($found) { Write-Ok "$Tag -- $($found.FullName) ($($found.Length) bytes)"; return $true }
+    Write-Fail "$Tag -- Output not found at $expected"
+    return $false
 }
 
 # -- Main build loop --------------------------------------------------------
